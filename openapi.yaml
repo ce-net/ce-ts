@@ -1,0 +1,1161 @@
+openapi: 3.1.0
+info:
+  title: CE Node HTTP API
+  version: 0.1.0
+  description: |
+    HTTP + SSE API for a CE node. The hand-written flagship clients are
+    `@ce-net/sdk` (TypeScript) and `ce-rs` (Rust); this spec is the secondary
+    artifact for generating Python/Go/Java clients (e.g. with Speakeasy).
+
+    MONEY: every amount field is a decimal STRING of integer base units
+    (1 credit = 10^18 base units, wei-style). Amounts routinely exceed 2^53 and
+    MUST stay strings — never `number`/`integer`. Generated clients should map
+    them to an arbitrary-precision integer / big-decimal type.
+
+    SSE: the `*/stream` endpoints emit `text/event-stream`. OpenAPI models SSE
+    poorly; generated clients need a hand-written streaming shim per language
+    (see `sse.ts` in `@ce-net/sdk`).
+
+    AUTH: a Bearer API token (derived from the node identity, persisted to
+    `<data_dir>/api.token`, or `CE_API_TOKEN`) is required on all non-GET
+    requests. Read-only GETs are unauthenticated.
+  license:
+    name: MIT
+  contact:
+    name: Leif Rydenfalk
+    email: ledamecrydenfalk@gmail.com
+servers:
+  - url: http://127.0.0.1:8844
+    description: Local node
+security: []
+tags:
+  - name: status
+  - name: jobs
+  - name: economy
+  - name: channels
+  - name: data
+  - name: mesh
+  - name: signals
+  - name: names
+  - name: capabilities
+  - name: streams
+  - name: control
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API token from `<data_dir>/api.token` or `CE_API_TOKEN`.
+  schemas:
+    Amount:
+      type: string
+      format: decimal
+      description: Decimal string of integer base units (10^18 per credit). Never a number.
+      example: "1500000000000000000"
+    Hex:
+      type: string
+      pattern: "^[0-9a-fA-F]*$"
+      description: Lowercase hex-encoded bytes.
+    NodeId:
+      type: string
+      description: 64-hex-char Ed25519 public key.
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    NodeStatus:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        height: { type: integer, format: int64 }
+        difficulty: { type: integer }
+        balance: { $ref: "#/components/schemas/Amount" }
+        circulating_supply: { $ref: "#/components/schemas/Amount" }
+        burned_total: { $ref: "#/components/schemas/Amount" }
+        bond: { $ref: "#/components/schemas/Amount" }
+        weight: { type: integer, format: int64 }
+        free:
+          allOf: [{ $ref: "#/components/schemas/Amount" }]
+          description: Spendable balance (total minus all locks, clamped at 0).
+        locked_channels:
+          allOf: [{ $ref: "#/components/schemas/Amount" }]
+          description: Credits locked in this node's open payment channels.
+        locked_bond:
+          allOf: [{ $ref: "#/components/schemas/Amount" }]
+          description: Credits locked in this node's active bond (equals bond).
+      required:
+        [node_id, height, difficulty, balance, circulating_supply, burned_total,
+         bond, weight, free, locked_channels, locked_bond]
+    Bootstrap:
+      type: object
+      properties:
+        peers:
+          type: array
+          items: { type: string }
+      required: [peers]
+    Beacon:
+      type: object
+      properties:
+        height: { type: integer, format: int64 }
+        hash: { type: string }
+      required: [height, hash]
+    AtlasEntry:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        cpu_cores: { type: integer }
+        mem_mb: { type: integer, format: int64 }
+        running_jobs: { type: integer }
+        last_seen_secs: { type: integer, format: int64 }
+        tags:
+          type: array
+          items: { type: string }
+      required: [node_id, cpu_cores, mem_mb, running_jobs, last_seen_secs, tags]
+    BidSpec:
+      type: object
+      properties:
+        image: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+        env:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+        cpu_cores: { type: integer }
+        mem_mb: { type: integer, format: int64 }
+        duration_secs: { type: integer, format: int64 }
+        bid: { $ref: "#/components/schemas/Amount" }
+      required: [image, cpu_cores, mem_mb, duration_secs, bid]
+    Job:
+      type: object
+      description: >-
+        A job tracked by this node. Note the two read endpoints emit different field
+        sets: GET /jobs (list) includes payer and bid; GET /jobs/{id} omits both and
+        returns only job_id, status, container_id, cost. The SDK models this as one
+        tolerant type with payer/bid optional (null when absent).
+      properties:
+        job_id: { type: string }
+        status:
+          type: string
+          description: pending | running | awaiting_settlement | settled | "failed: <reason>"
+        payer:
+          oneOf: [{ $ref: "#/components/schemas/NodeId" }, { type: "null" }]
+          description: Present only on GET /jobs (list); absent on GET /jobs/{id}.
+        container_id:
+          oneOf: [{ type: string }, { type: "null" }]
+        cost:
+          oneOf: [{ $ref: "#/components/schemas/Amount" }, { type: "null" }]
+        bid:
+          oneOf: [{ $ref: "#/components/schemas/Amount" }, { type: "null" }]
+          description: Present only on GET /jobs (list); absent on GET /jobs/{id}.
+      required: [job_id, status]
+    JobIdResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+      required: [job_id]
+    SettleRequest:
+      type: object
+      properties:
+        cost: { $ref: "#/components/schemas/Amount" }
+        payer_sig:
+          type: string
+          description: 128-hex Ed25519 signature over payer_settle_bytes(job_id, host, cost).
+      required: [cost, payer_sig]
+    Submitted:
+      type: object
+      properties:
+        status: { type: string, example: submitted }
+      required: [status]
+    MeshDeployRequest:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        image: { type: string }
+        wasm_module: { type: string }
+        wasm_entry: { type: string }
+        cmd:
+          type: array
+          items: { type: string }
+        cpu_cores: { type: integer }
+        mem_mb: { type: integer, format: int64 }
+        duration_secs: { type: integer, format: int64 }
+        bid: { $ref: "#/components/schemas/Amount" }
+        grant: { type: string }
+        inputs:
+          type: array
+          items: { type: string }
+        hint_multiaddr: { type: string }
+      required: [node_id, cpu_cores, mem_mb, duration_secs, bid]
+    Deployment:
+      type: object
+      properties:
+        job_id: { type: string }
+        output:
+          oneOf: [{ type: string }, { type: "null" }]
+      required: [job_id]
+    MeshKillRequest:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        job_id: { type: string }
+        grant: { type: string }
+        hint_multiaddr: { type: string }
+      required: [node_id, job_id]
+    TransferRequest:
+      type: object
+      properties:
+        to: { $ref: "#/components/schemas/NodeId" }
+        amount: { $ref: "#/components/schemas/Amount" }
+      required: [to, amount]
+    TxIdResponse:
+      type: object
+      properties:
+        tx_id: { type: string }
+      required: [tx_id]
+    NodeHistory:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        jobs_hosted: { type: integer, format: int64 }
+        jobs_paid: { type: integer, format: int64 }
+        heartbeats_hosted: { type: integer, format: int64 }
+        heartbeats_paid: { type: integer, format: int64 }
+        expiries: { type: integer, format: int64 }
+        earned: { $ref: "#/components/schemas/Amount" }
+        spent: { $ref: "#/components/schemas/Amount" }
+        first_height: { type: integer, format: int64 }
+        last_height: { type: integer, format: int64 }
+      required:
+        [node_id, jobs_hosted, jobs_paid, heartbeats_hosted, heartbeats_paid,
+         expiries, earned, spent, first_height, last_height]
+    TxRecord:
+      type: object
+      description: One confirmed transaction touching a node (GET /transactions/{node_id}).
+      properties:
+        tx_id:
+          type: string
+          description: Content-addressed transaction id (64 hex).
+        height: { type: integer, format: int64 }
+        kind:
+          type: string
+          description: >-
+            Tx kind label, e.g. Transfer | UptimeReward | JobBid | JobSettle |
+            JobExpire | Heartbeat | ChannelOpen | ChannelClose | ChannelExpire |
+            NameClaim | RevokeCapability | HostBond | HostUnbond | SlashEquivocation.
+        amount:
+          allOf: [{ $ref: "#/components/schemas/Amount" }]
+          description: Amount moved relative to this tx ("0" for amount-less kinds).
+        counterparty:
+          oneOf: [{ $ref: "#/components/schemas/NodeId" }, { type: "null" }]
+          description: The other party relative to the queried node, when there is one.
+        direction:
+          type: string
+          enum: [in, out, self]
+          description: Value direction relative to the queried node.
+      required: [tx_id, height, kind, amount, direction]
+    ChannelOpenRequest:
+      type: object
+      properties:
+        host: { $ref: "#/components/schemas/NodeId" }
+        capacity: { $ref: "#/components/schemas/Amount" }
+        expiry_height: { type: integer, format: int64 }
+      required: [host, capacity]
+    ChannelIdResponse:
+      type: object
+      properties:
+        channel_id: { type: string }
+      required: [channel_id]
+    Channel:
+      type: object
+      properties:
+        channel_id: { type: string }
+        payer: { $ref: "#/components/schemas/NodeId" }
+        host: { $ref: "#/components/schemas/NodeId" }
+        capacity: { $ref: "#/components/schemas/Amount" }
+        expiry_height: { type: integer, format: int64 }
+      required: [channel_id, payer, host, capacity, expiry_height]
+    ReceiptRequest:
+      type: object
+      properties:
+        channel_id: { type: string }
+        host: { $ref: "#/components/schemas/NodeId" }
+        cumulative: { $ref: "#/components/schemas/Amount" }
+      required: [channel_id, host, cumulative]
+    Receipt:
+      type: object
+      properties:
+        channel_id: { type: string }
+        cumulative: { $ref: "#/components/schemas/Amount" }
+        payer_sig: { type: string }
+      required: [channel_id, cumulative, payer_sig]
+    ChannelCloseRequest:
+      type: object
+      properties:
+        cumulative: { $ref: "#/components/schemas/Amount" }
+        payer_sig: { type: string }
+      required: [cumulative, payer_sig]
+    RelayPayRequest:
+      type: object
+      properties:
+        relay: { $ref: "#/components/schemas/NodeId" }
+        channel_id: { type: string }
+        cumulative: { $ref: "#/components/schemas/Amount" }
+      required: [relay, channel_id, cumulative]
+    HashResponse:
+      type: object
+      properties:
+        hash: { type: string }
+      required: [hash]
+    DataFetchRequest:
+      type: object
+      properties:
+        provider: { $ref: "#/components/schemas/NodeId" }
+        cid: { type: string }
+        channel_id: { type: string }
+        cumulative: { $ref: "#/components/schemas/Amount" }
+      required: [provider, cid, channel_id, cumulative]
+    MeshSendRequest:
+      type: object
+      properties:
+        to: { $ref: "#/components/schemas/NodeId" }
+        topic: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+      required: [to, topic, payload_hex]
+    AppMessage:
+      type: object
+      properties:
+        from: { $ref: "#/components/schemas/NodeId" }
+        topic: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+        received_at: { type: integer, format: int64 }
+        reply_token:
+          oneOf: [{ type: integer, format: int64 }, { type: "null" }]
+      required: [from, topic, payload_hex]
+    SubscribeRequest:
+      type: object
+      properties:
+        topic: { type: string }
+      required: [topic]
+    PublishRequest:
+      type: object
+      properties:
+        topic: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+      required: [topic, payload_hex]
+    MeshRequestRequest:
+      type: object
+      properties:
+        to: { $ref: "#/components/schemas/NodeId" }
+        topic: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+        timeout_ms: { type: integer, format: int64 }
+      required: [to, topic, payload_hex]
+    PayloadHexResponse:
+      type: object
+      properties:
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+      required: [payload_hex]
+    MeshReplyRequest:
+      type: object
+      properties:
+        token: { type: integer, format: int64 }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+      required: [token, payload_hex]
+    Signal:
+      type: object
+      properties:
+        from: { $ref: "#/components/schemas/NodeId" }
+        to: { type: string, description: '"broadcast" or a NodeId' }
+        capabilities:
+          type: array
+          items: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+        burn_proof: {}
+        nonce: { type: integer, format: int64 }
+        id: { type: string }
+      required: [from, to, capabilities, payload_hex, nonce, id]
+    SendSignalRequest:
+      type: object
+      properties:
+        to: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        payload_hex: { $ref: "#/components/schemas/Hex" }
+        burn_tx_id_hex: { type: string }
+      required: [to, capabilities]
+    SendSignalResponse:
+      type: object
+      properties:
+        id: { type: string }
+        nonce: { type: integer, format: int64 }
+      required: [id, nonce]
+    BlockEvent:
+      type: object
+      properties:
+        index: { type: integer, format: int64 }
+        hash: { type: string }
+        prev_hash: { type: string }
+        timestamp: { type: integer, format: int64 }
+        miner: { $ref: "#/components/schemas/NodeId" }
+        tx_count: { type: integer }
+        nonce: { type: integer, format: int64 }
+      required: [index, hash, prev_hash, timestamp, miner, tx_count, nonce]
+    TxEvent:
+      type: object
+      properties:
+        id: { type: string }
+        origin: { $ref: "#/components/schemas/NodeId" }
+        kind:
+          type: string
+          enum:
+            [Transfer, UptimeReward, JobBid, JobSettle, JobExpire, Heartbeat,
+             ChannelOpen, ChannelClose, ChannelExpire, NameClaim,
+             RevokeCapability, HostBond, HostUnbond, SlashEquivocation]
+        amount: { $ref: "#/components/schemas/Amount" }
+      required: [id, origin, kind, amount]
+    NameClaimRequest:
+      type: object
+      properties:
+        name: { type: string }
+      required: [name]
+    NameResolveResponse:
+      type: object
+      properties:
+        name: { type: string }
+        node_id: { $ref: "#/components/schemas/NodeId" }
+      required: [name, node_id]
+    AdvertiseRequest:
+      type: object
+      properties:
+        service: { type: string }
+      required: [service]
+    FindResponse:
+      type: object
+      properties:
+        service: { type: string }
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/NodeId" }
+      required: [service, providers]
+    RevokeRequest:
+      type: object
+      properties:
+        nonce: { type: integer, format: int64 }
+      required: [nonce]
+    RevokedEntry:
+      type: object
+      properties:
+        issuer: { $ref: "#/components/schemas/NodeId" }
+        nonce: { type: integer, format: int64 }
+      required: [issuer, nonce]
+    ChainSaveResponse:
+      type: object
+      properties:
+        saved: { type: string }
+      required: [saved]
+    TunnelRequest:
+      type: object
+      properties:
+        node_id: { $ref: "#/components/schemas/NodeId" }
+        local_port: { type: integer }
+        remote_port: { type: integer }
+        caps: { type: string }
+        hint: { type: string }
+      required: [node_id, local_port, remote_port]
+    TunnelResult:
+      type: object
+      properties:
+        local_port: { type: integer }
+        remote_port: { type: integer }
+        node_id: { $ref: "#/components/schemas/NodeId" }
+      required: [local_port, remote_port, node_id]
+  responses:
+    Error400:
+      description: Bad request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error401:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error402:
+      description: Insufficient balance
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error404:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error502:
+      description: Mesh RPC peer rejected
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error503:
+      description: Service unavailable (Docker)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Error504:
+      description: Mesh RPC timeout
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+paths:
+  /health:
+    get:
+      tags: [status]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Node is live
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+  /status:
+    get:
+      tags: [status]
+      summary: Node state snapshot
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeStatus" }
+  /bootstrap:
+    get:
+      tags: [status]
+      summary: Advertised bootstrap multiaddrs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bootstrap" }
+  /beacon:
+    get:
+      tags: [status]
+      summary: Verifiable public randomness (PoW tip)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Beacon" }
+  /atlas:
+    get:
+      tags: [status]
+      summary: Peer capacity atlas
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AtlasEntry" }
+  /jobs:
+    get:
+      tags: [jobs]
+      summary: List all jobs this node tracks
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Job" }
+  /jobs/bid:
+    post:
+      tags: [jobs]
+      summary: Submit a job bid (locks the bid amount)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BidSpec" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobIdResponse" }
+        "402": { $ref: "#/components/responses/Error402" }
+  /jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Job status
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/Error404" }
+    delete:
+      tags: [jobs]
+      summary: Force-stop & remove a job's container
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: No content }
+        "404": { $ref: "#/components/responses/Error404" }
+  /jobs/{id}/settle:
+    post:
+      tags: [jobs]
+      summary: Payer co-signs settlement; host submits JobSettle
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettleRequest" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/Error400" }
+  /mesh-deploy:
+    post:
+      tags: [jobs]
+      summary: Directed placement of a cell on a specific host over the mesh
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeshDeployRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+  /mesh-kill:
+    post:
+      tags: [jobs]
+      summary: Stop a mesh-deployed cell on a specific host
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeshKillRequest" }
+      responses:
+        "204": { description: No content }
+        "400": { $ref: "#/components/responses/Error400" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+  /transfer:
+    post:
+      tags: [economy]
+      summary: Transfer credits
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransferRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TxIdResponse" }
+        "400": { $ref: "#/components/responses/Error400" }
+        "402": { $ref: "#/components/responses/Error402" }
+  /history/{node_id}:
+    get:
+      tags: [economy]
+      summary: Per-node interaction history (reputation substrate)
+      parameters:
+        - { name: node_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeHistory" }
+        "400": { $ref: "#/components/responses/Error400" }
+  /transactions/{node_id}:
+    get:
+      tags: [economy]
+      summary: Confirmed transactions touching a node (newest first, paginated)
+      parameters:
+        - { name: node_id, in: path, required: true, schema: { type: string } }
+        - name: limit
+          in: query
+          required: false
+          description: Max items to return (default 100, capped at 500).
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - name: before
+          in: query
+          required: false
+          description: Exclude txs at block height >= before (cursor for the next/older page).
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TxRecord" }
+        "400": { $ref: "#/components/responses/Error400" }
+  /channels:
+    get:
+      tags: [channels]
+      summary: List open payment channels
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Channel" }
+  /channels/open:
+    post:
+      tags: [channels]
+      summary: Open a payment channel (locks capacity)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChannelOpenRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChannelIdResponse" }
+        "402": { $ref: "#/components/responses/Error402" }
+  /channels/receipt:
+    post:
+      tags: [channels]
+      summary: Payer signs an off-chain receipt
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReceiptRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Receipt" }
+  /channels/{id}/close:
+    post:
+      tags: [channels]
+      summary: Host redeems the highest receipt to close the channel
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChannelCloseRequest" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/Error400" }
+  /channels/{id}/expire:
+    post:
+      tags: [channels]
+      summary: Payer reclaims the channel after expiry
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+  /relay/pay:
+    post:
+      tags: [economy]
+      summary: Pay a relay over a payment channel
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RelayPayRequest" }
+      responses:
+        "200":
+          description: Paid
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: paid } }
+        "400": { $ref: "#/components/responses/Error400" }
+        "502": { $ref: "#/components/responses/Error502" }
+  /blobs:
+    post:
+      tags: [data]
+      summary: Store a content-addressed blob
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HashResponse" }
+  /blobs/{hash}:
+    get:
+      tags: [data]
+      summary: Fetch a blob by content hash
+      parameters:
+        - { name: hash, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error404" }
+  /data/fetch:
+    post:
+      tags: [data]
+      summary: Paid chunk fetch from a provider over the mesh
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DataFetchRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "502": { $ref: "#/components/responses/Error502" }
+  /mesh/send:
+    post:
+      tags: [mesh]
+      summary: Directed signed message to a node
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeshSendRequest" }
+      responses:
+        "200":
+          description: Delivered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: delivered } }
+        "502": { $ref: "#/components/responses/Error502" }
+  /mesh/messages:
+    get:
+      tags: [mesh]
+      summary: Inbox snapshot of recent app messages
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AppMessage" }
+  /mesh/messages/stream:
+    get:
+      tags: [streams]
+      summary: SSE push stream of inbound app messages
+      description: |
+        Emits `text/event-stream`. Each `data:` line is an AppMessage JSON.
+        Keep-alive comment every 15s. Generated clients need a streaming shim.
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/AppMessage" }
+  /mesh/subscribe:
+    post:
+      tags: [mesh]
+      summary: Subscribe to an app pub/sub topic
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscribeRequest" }
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: subscribed } }
+  /mesh/publish:
+    post:
+      tags: [mesh]
+      summary: Publish a signed message to a topic
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishRequest" }
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: published } }
+  /mesh/request:
+    post:
+      tags: [mesh]
+      summary: Synchronous request/response over the mesh
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeshRequestRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PayloadHexResponse" }
+        "502": { $ref: "#/components/responses/Error502" }
+        "504": { $ref: "#/components/responses/Error504" }
+  /mesh/reply:
+    post:
+      tags: [mesh]
+      summary: Answer an inbound request by token
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MeshReplyRequest" }
+      responses:
+        "200":
+          description: Replied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: replied } }
+  /signals:
+    get:
+      tags: [signals]
+      summary: Last 100 validated CEP-1 signals
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Signal" }
+  /signals/send:
+    post:
+      tags: [signals]
+      summary: Sign and broadcast a CEP-1 signal
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendSignalRequest" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendSignalResponse" }
+  /signals/stream:
+    get:
+      tags: [streams]
+      summary: SSE push stream of validated CEP-1 signals
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/Signal" }
+  /blocks/stream:
+    get:
+      tags: [streams]
+      summary: SSE push stream of accepted blocks
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/BlockEvent" }
+  /transactions/stream:
+    get:
+      tags: [streams]
+      summary: SSE push stream of verified transactions
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/TxEvent" }
+  /names/claim:
+    post:
+      tags: [names]
+      summary: Claim a human-readable name
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NameClaimRequest" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/Error400" }
+  /names/{name}:
+    get:
+      tags: [names]
+      summary: Resolve a name to a NodeId
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NameResolveResponse" }
+        "404": { $ref: "#/components/responses/Error404" }
+  /discovery/advertise:
+    post:
+      tags: [names]
+      summary: Advertise a named service
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdvertiseRequest" }
+      responses:
+        "200":
+          description: Advertised
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, example: advertised } }
+  /discovery/find/{service}:
+    get:
+      tags: [names]
+      summary: Find NodeIds advertising a service
+      parameters:
+        - { name: service, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FindResponse" }
+  /capabilities/revoke:
+    post:
+      tags: [capabilities]
+      summary: Revoke a capability this node issued
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TxIdResponse" }
+  /capabilities/revoked:
+    get:
+      tags: [capabilities]
+      summary: On-chain revoked (issuer, nonce) set
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RevokedEntry" }
+  /chain/save:
+    post:
+      tags: [control]
+      summary: Snapshot the in-memory chain to disk
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChainSaveResponse" }
+  /tunnel:
+    post:
+      tags: [control]
+      summary: Open a TCP tunnel to a remote port over the mesh
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TunnelRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TunnelResult" }
+        "400": { $ref: "#/components/responses/Error400" }
