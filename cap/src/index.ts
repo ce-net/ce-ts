@@ -11,7 +11,7 @@
  * `TextEncoder`/`TextDecoder`, which are global in Node 20+, Deno, Bun, and browsers).
  */
 
-import { ed25519 } from "@noble/ed25519";
+import * as ed25519 from "@noble/ed25519";
 import { sha256 } from "@noble/hashes/sha256";
 import {
   BincodeReader,
