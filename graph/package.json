@@ -1,29 +1,24 @@
 {
-  "name": "@ce-net/sdk",
+  "name": "@ce-net/graph",
   "version": "0.1.0",
-  "description": "Runtime-agnostic TypeScript client for the CE node HTTP+SSE API.",
+  "description": "Pure-TS assembly of the CE Fabric Map network graph from measured per-node RTT edges (GET /netgraph) — implements the ce-graph query contract (compute-fabric.md §3.4).",
   "type": "module",
   "sideEffects": false,
-  "workspaces": ["graph", "cap"],
   "exports": {
     ".": {
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/index.cjs"
       }
     },
     "./package.json": "./package.json"
   },
-  "main": "./dist/index.cjs",
+  "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "openapi.yaml"
+    "src"
   ],
   "engines": {
     "node": ">=20"
@@ -32,30 +27,27 @@
   "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ce-net/ce-ts.git"
+    "url": "git+https://github.com/ce-net/ce-ts.git",
+    "directory": "graph"
   },
   "homepage": "https://ce-net.com",
   "keywords": [
     "ce",
     "ce-net",
-    "compute",
-    "blockchain",
-    "sdk",
-    "client"
+    "graph",
+    "network",
+    "latency",
+    "vivaldi",
+    "fabric"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "prepublishOnly": "tsdown && publint && attw --pack"
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.0",
     "@types/node": "^22.0.0",
-    "publint": "^0.3.0",
-    "tsdown": "^0.12.0",
-    "tsx": "^4.22.4",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }
