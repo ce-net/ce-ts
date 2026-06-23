@@ -4,7 +4,7 @@
   "description": "Runtime-agnostic TypeScript client for the CE node HTTP+SSE API.",
   "type": "module",
   "sideEffects": false,
-  "workspaces": ["graph", "cap"],
+  "workspaces": ["graph", "cap", "agent"],
   "exports": {
     ".": {
       "import": {
