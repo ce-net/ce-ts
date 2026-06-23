@@ -22,8 +22,10 @@ export interface TransportOptions {
   baseUrl: string;
   token?: TokenSource;
   fetch?: typeof fetch;
-  timeoutMs: number;
-  maxRetries: number;
+  /** Request timeout in ms (default 30000). */
+  timeoutMs?: number;
+  /** Max retry attempts on retryable failures (default 2). */
+  maxRetries?: number;
   headers?: Record<string, string>;
 }
 
@@ -71,8 +73,8 @@ export class Transport {
     }
     // Bind to globalThis to preserve `this` for some runtimes.
     this.fetchImpl = opts.fetch ?? f.bind(globalThis);
-    this.timeoutMs = opts.timeoutMs;
-    this.maxRetries = opts.maxRetries;
+    this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.maxRetries = opts.maxRetries ?? 2;
     this.defaultHeaders = opts.headers ?? {};
   }
 

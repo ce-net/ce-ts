@@ -57,6 +57,34 @@ describe("Amount", () => {
     expect(Amount.fromBaseUnits("-1").isNegative()).toBe(true);
   });
 
+  it("rejects fractional number credits (no float-error encoding)", () => {
+    // 0.1 + 0.2 === 0.30000000000000004 in IEEE-754. Accepting it as a number would
+    // silently encode the float error into base units; it must throw instead.
+    expect(() => Amount.fromCredits(0.1 + 0.2)).toThrow(RangeError);
+    expect(() => Amount.fromCredits(0.3)).toThrow(RangeError);
+    expect(() => Amount.fromCredits(1.5)).toThrow(RangeError);
+    expect(() => Amount.fromCredits(NaN)).toThrow(RangeError);
+    expect(() => Amount.fromCredits(Infinity)).toThrow(RangeError);
+    // The exact string form is the supported path and stays precise.
+    expect(Amount.fromCredits("0.3").toCredits()).toBe("0.3");
+  });
+
+  it("accepts integer number credits exactly", () => {
+    expect(Amount.fromCredits(0).toCredits()).toBe("0");
+    expect(Amount.fromCredits(1).toBaseUnits()).toBe(CREDIT.toString());
+    expect(Amount.fromCredits(1000).toCredits()).toBe("1000");
+    expect(Amount.fromCredits(-5).toCredits()).toBe("-5");
+  });
+
+  it("rejects empty, sign-only, and internal-minus credit strings", () => {
+    expect(() => Amount.fromCredits("")).toThrow(RangeError);
+    expect(() => Amount.fromCredits("-")).toThrow(RangeError);
+    expect(() => Amount.fromCredits("   ")).toThrow(RangeError);
+    expect(() => Amount.fromCredits("1.-5")).toThrow(RangeError);
+    expect(() => Amount.fromCredits("1-2")).toThrow(RangeError);
+    expect(() => Amount.fromCredits("+5")).toThrow(RangeError);
+  });
+
   it("negative credit parsing/formatting", () => {
     const a = Amount.fromCredits("-1.5");
     expect(a.toBaseUnits()).toBe("-1500000000000000000");

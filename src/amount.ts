@@ -48,7 +48,10 @@ export class Amount {
   /**
    * Parse a human credit decimal (`"1000"`, `"1.5"`, `"0.000000000000000001"`),
    * up to 18 decimal places. Pure string math — never `parseFloat`. Mirrors
-   * ce-rs `Amount::parse_credits`. Also accepts `number`/`bigint` for whole credits.
+   * ce-rs `Amount::parse_credits`. Also accepts `number`/`bigint`, but a `number` MUST be
+   * an integer count of credits: a fractional `number` (e.g. `0.1 + 0.2`) cannot be
+   * represented exactly in IEEE-754, so accepting it would silently encode float error
+   * into the ledger. Pass fractional credits as a string (`fromCredits("0.3")`) instead.
    */
   static fromCredits(s: string | number | bigint): Amount {
     if (typeof s === "bigint") return new Amount(s * CREDIT);
@@ -56,12 +59,23 @@ export class Amount {
       if (!Number.isFinite(s)) {
         throw new RangeError(`invalid credit amount: ${s}`);
       }
-      // Route through the string parser so fractional numbers stay exact-ish.
-      return Amount.fromCredits(numberToDecimalString(s));
+      if (!Number.isInteger(s)) {
+        throw new RangeError(
+          `fromCredits(number) requires an integer credit count (got ${s}); ` +
+            `pass fractional credits as a string, e.g. fromCredits("0.3")`,
+        );
+      }
+      // Exact: an integer-valued JS number maps 1:1 onto a bigint count of whole credits.
+      return new Amount(BigInt(s) * CREDIT);
     }
     const trimmed = s.trim();
     const neg = trimmed.startsWith("-");
     const body = neg ? trimmed.slice(1) : trimmed;
+    // Reject empty and sign-only input ("" / "-" / "   "): the body must contain digits,
+    // otherwise these previously parsed to a silent zero.
+    if (body === "") {
+      throw new RangeError(`invalid credit amount: ${JSON.stringify(s)}`);
+    }
     const [wholeStr, fracStr = ""] = body.split(".");
     if (body.split(".").length > 2) {
       throw new RangeError(`invalid credit amount: ${JSON.stringify(s)}`);
@@ -149,21 +163,4 @@ export class Amount {
   isNegative(): boolean {
     return this.base < 0n;
   }
-}
-
-/**
- * Convert a finite JS number into a plain decimal string without scientific notation,
- * so it can be fed through the exact string parser. Best-effort: callers that need
- * exactness for fractional credits should pass a string.
- */
-function numberToDecimalString(n: number): string {
-  if (Number.isInteger(n)) return n.toString();
-  // Avoid exponential notation for small/large magnitudes.
-  const s = n.toString();
-  if (!s.includes("e") && !s.includes("E")) return s;
-  // Expand exponent form.
-  return n.toLocaleString("en-US", {
-    useGrouping: false,
-    maximumFractionDigits: 18,
-  });
 }
