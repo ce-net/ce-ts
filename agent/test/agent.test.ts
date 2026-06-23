@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CeClient } from "../src/client.js";
 import { doctor, trace } from "../src/debug.js";
 import { buildTools } from "../src/tools.js";
+import { validate } from "../src/validate.js";
 
 /** A mock fetch that routes by path to canned responses. */
 function mockFetch(routes: Record<string, { status?: number; body: unknown }>): typeof fetch {
@@ -99,5 +100,27 @@ describe("tool catalog", () => {
     const status = tools.find((t) => t.name === "ce_status")!;
     const res = (await status.run({})) as { ok: boolean };
     expect(res.ok).toBe(true);
+  });
+});
+
+describe("validate harness", () => {
+  it("passes against a healthy node and fails clearly against a dead one", async () => {
+    const healthy = new CeClient({
+      fetch: mockFetch({
+        "/health": { body: "ok" },
+        "/status": { body: { node_id: "ab", height: 10, balance: "5" } },
+        "/atlas": { body: [{ node_id: "x", cpu_cores: 4, mem_mb: 8000, running_jobs: 0, last_seen_secs: 1, tags: [] }] },
+        "/netgraph": { body: [{ peer: "p", rtt_ms: 12, samples: 3, last_seen_secs: 1 }] },
+      }),
+    });
+    const ok = await validate(healthy);
+    expect(ok.ok).toBe(true);
+    expect(ok.steps.find((s) => s.name === "tool-catalog")?.ok).toBe(true);
+    expect(ok.steps.find((s) => s.name === "deploy-dryrun")?.ok).toBe(true);
+
+    const dead = new CeClient({ fetch: mockFetch({ "/health": { status: 503, body: "down" } }) });
+    const bad = await validate(dead);
+    expect(bad.ok).toBe(false);
+    expect(bad.summary).toContain("doctor");
   });
 });

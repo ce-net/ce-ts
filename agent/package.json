@@ -6,7 +6,8 @@
   "license": "MIT",
   "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
   "bin": {
-    "ce-agent-mcp": "./dist/mcp-stdio.js"
+    "ce-agent-mcp": "./dist/mcp-stdio.js",
+    "ce-validate": "./dist/validate-cli.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
