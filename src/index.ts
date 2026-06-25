@@ -13,6 +13,23 @@ export { CeClient } from "./client.js";
 export type { CeClientOptions } from "./client.js";
 export { Amount, CREDIT } from "./amount.js";
 
+// Browser-node bridge (in-browser WASM node + same-origin transports under one strict CSP).
+export {
+  connectNode,
+  bridgeFetch,
+  getBridge,
+  bridgeAvailable,
+  BRIDGE_BASE_URL,
+  SAME_ORIGIN_NODE_PATH,
+  CE_STRICT_CSP,
+} from "./browser-node.js";
+export type {
+  CeNodeBridge,
+  BridgeRequestInit,
+  BridgeResponse,
+  ConnectNodeOptions,
+} from "./browser-node.js";
+
 // Errors
 export {
   CeError,
