@@ -147,7 +147,6 @@ describe("locate selection", () => {
         trusted: history({ nodeId: "trusted", jobsPaid: 5000, heartbeatsPaid: 5000 }),
         stranger: history({ nodeId: "stranger", firstHeight: 0 }), // newcomer => trust 0
       },
-      now: undefined,
     });
     const out = await locate(ce, "svc", { now: 1000, want: 2 });
     expect(out).toHaveLength(2);
