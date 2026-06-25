@@ -54,6 +54,19 @@ export type { TokenSource } from "./auth.js";
 // SSE
 export type { StreamOptions, SseEvent } from "./sse.js";
 
+// Mesh-app framework: be a service (serve) + find one (locate/call). Ports ce-rs serve/locate.
+export { serve, serveWhere } from "./serve.js";
+export type { Handler, ServeRequest, ServeOptions } from "./serve.js";
+export {
+  locate,
+  call,
+  register,
+  spread,
+  faultDomain,
+  beaconJitter,
+} from "./locate.js";
+export type { Instance, LocateOpts, CallOpts } from "./locate.js";
+
 // Hex / bytes helpers
 export { toHex, fromHex, utf8ToBytes, bytesToUtf8 } from "./hex.js";
 
