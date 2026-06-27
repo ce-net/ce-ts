@@ -1,7 +1,7 @@
 /**
  * `CeClient` — the facade. Composed of discoverable namespace objects (`ce.jobs`,
  * `ce.channels`, `ce.mesh`, `ce.data`, `ce.names`, `ce.discovery`, `ce.signals`,
- * `ce.capabilities`, `ce.streams`) plus flat aliases (`ce.status()`, `ce.transfer()`,
+ * `ce.capabilities`, `ce.streams`) plus flat aliases (`ce.getStatus()`, `ce.transfer()`,
  * `ce.bid()`, ...) that mirror ce-rs's flat shape for 1:1 familiarity.
  */
 
@@ -62,7 +62,7 @@ export interface CeClientOptions {
  *
  * ```ts
  * const ce = CeClient.local();
- * const s = await ce.status();
+ * const s = await ce.getStatus();
  * await ce.transfer(recipient, Amount.fromCredits("1.5"));
  * for await (const blk of ce.streams.blocks()) { ... }
  * ```

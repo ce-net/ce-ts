@@ -18,7 +18,7 @@ import { CeClient, Amount } from "@ce-net/sdk";
 const ce = CeClient.local(); // 127.0.0.1:8844, auto-discovers api.token (Node/Bun/Deno)
 
 // status + money
-const s = await ce.status();
+const s = await ce.getStatus();
 console.log(`node ${s.nodeId} @ height ${s.height}, balance ${s.balance.toCredits()}`);
 
 // transfer 1.5 credits — an Amount, never a JS number
@@ -145,7 +145,12 @@ for await (const m of ce.streams.messages(opts))     { /* AppMessage */ }
 | `ce.names` / `ce.discovery` | `claim` `resolve` / `advertise` `find` |
 | `ce.capabilities` | `revoke` `revoked` |
 | `ce.streams` | `blocks` `transactions` `signals` `messages` |
-| flat / control | `ce.tunnel` `ce.chainSave` + flat aliases (`ce.status()`, `ce.transfer()`, `ce.bid()`, …) |
+| `ce.wallet` / `ce.tags` | `balance` `history` `send` `watch` / `advertise` `find` |
+| flat / control | `ce.tunnel` `ce.chainSave` + flat aliases (`ce.getStatus()`, `ce.transfer()`, `ce.bid()`, …) |
+
+The `serve` / `serveWhere` (mesh-app request/reply handlers), `locate` / `call` / `register`
+(service discovery), and `connectNode` / `bridgeFetch` (in-browser node bridge) helpers are
+also exported from the package root — see `src/serve.ts`, `src/locate.ts`, `src/browser-node.ts`.
 
 The SDK holds **no key material** and performs **no signing** — `settle` and channel `close`
 forward a caller-built `payerSig` hex string; the node signs receipts on `signReceipt`.
@@ -173,4 +178,5 @@ and the SSE `AsyncIterable`s.
 
 ## License
 
-MIT © Leif Rydenfalk
+AGPL-3.0-only © Leif Rydenfalk. A commercial license is also available — see
+[`LICENSING.md`](./LICENSING.md) and [`COMMERCIAL-LICENSE.md`](./COMMERCIAL-LICENSE.md).
